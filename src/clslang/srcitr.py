@@ -33,11 +33,14 @@ class SrcItr(Generic[CT], Iterator[CT]):
         return self.child
 
     def __next__(self) -> CT:
-        if self.pos >= len(self.seq):
+        if self.is_eof():
             raise StopSrcItr()
         ch = self.seq[self.pos]
         self.pos += 1
         return ch
+
+    def is_eof(self) -> bool:
+        return self.pos >= len(self.seq)
 
     def __exit__(self, exc_type:Type[Exception], exc_value:Exception, trace):
         """ End this iterator """
@@ -47,6 +50,9 @@ class SrcItr(Generic[CT], Iterator[CT]):
                 self.pos = self.child.pos
             del self.child
             self.child = None
+
+    def __repr__(self) -> str:
+        return '<SrcItr#%d len=%d, pos=%d>' % (id(self), len(self.seq), self.pos)
 
 
 def test_itr():

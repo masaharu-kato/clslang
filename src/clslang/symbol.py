@@ -1,10 +1,11 @@
 
 import itertools
 import copy
-from abc import abstractmethod
+import enum
+from abc import abstractclassmethod, abstractmethod, abstractproperty
 from typing import Any, Callable, Dict, Generic, Hashable, Iterable, Iterator, List, Optional, Set, Tuple, Type, TypeVar, Union
 
-from clslang.srcitr import SrcItr, StopSrcItr
+from clslang.srcitr import SrcItr, StopSrcItr # type: ignore
 
 # DictKeyVals = Tuple[Tuple, Tuple[Any, Any]]
 T = TypeVar('T')
@@ -12,37 +13,39 @@ CT = TypeVar('CT') # Char type
 
 CharType = str
 CharSeq = str
-Maker = Callable[[Any], Any]
+Maker = Optional[Callable[[Any], Any]]
 
 class SymbolTryFailed(Exception):
     """ Symbol Try Failed Exception """
 
-class IgnoreRes:
-    """ Symbol: Ignore on results """
+class NotAllCharsUsed(Exception):
+    """ Not all given string used Exception """
 
-class Symbol():
+class SymbolABC():
     """ Symbol ABC """
-    def __init__(self, *, maker:Maker):
-        self.maker = maker
-
-    def make(self, val:Any) -> Any:
-        if self.maker is None:
-            if isinstance(val, Iterator):
-                return tuple(val)
-            return val
-        return self.maker(val)
-
     @abstractmethod
-    def tryitr(self, chitr:SrcItr) -> Any:
+    def itr_for_try(self, chitr:SrcItr) -> Iterator:
+        """ Process values """
         raise NotImplementedError()
 
-    def trystr(self, chseq:Iterable) -> Any:
-        return self.tryitr(SrcItr(chseq))
+    @abstractmethod
+    def tryitr(self, valitr:Iterator) -> Iterator:
+        """ Process values
+            (If needed, return result values)
+        """
+        raise NotImplementedError()
 
-SymbolLike = Union[Symbol, tuple, str]
+    def trystr(self, chseq:Iterable, *, all:bool=True) -> Any:
+        res = tuple(self.tryitr(srcitr := SrcItr(chseq)))[0]
+        # print('is_eof: %d' % srcitr.is_eof())
+        # if all and not srcitr.is_eof():
+        #   raise NotAllCharsUsed('Not all characters used on %s' % repr(srcitr))
+        return res
 
-def to_symbol(symbol:SymbolLike) -> Symbol:
-    if isinstance(symbol, Symbol):
+SymbolLike = Union[SymbolABC, tuple, str]
+
+def to_symbol(symbol:SymbolLike) -> SymbolABC:
+    if isinstance(symbol, SymbolABC):
         return symbol
     if isinstance(symbol, tuple):
         return Seq(*symbol)
@@ -52,48 +55,124 @@ def to_symbol(symbol:SymbolLike) -> Symbol:
         return Str(symbol)
     raise TypeError()
 
-class CharABC(Symbol):
+class ResSymbolABC(SymbolABC):
+    """ """
+    def __init__(self, *, maker:Maker=None):
+        self.maker = maker
+
+    def tryitr(self, valitr: Iterator) -> Iterator:
+        """ (Override, Final) """
+        return self.make_from_itr(self.itr_for_try(valitr))
+        
+    def make_from_itr(self, valitr: Iterator) -> Iterator:
+        """ """
+        raise NotImplementedError()
+
+class OneResSymbol(ResSymbolABC):
+    def preprocess_one_valitr(self, valitr: Iterator) -> Any:
+        """ Prepare a value for `make_from_itr` (default implementation) """
+        return list(valitr)[0]
+
+    def make_from_itr(self, valitr: Iterator) -> Iterator:
+        """ (Final) """
+        _valitr = self.preprocess_one_valitr(valitr)
+        if self.maker is None:
+            yield _valitr
+        else:
+            yield self.maker(_valitr)
+
+class MultiResSymbol(ResSymbolABC):
+    """ Normal symbol ABC
+        (Returns a value)
+    """
+    def preprocess_multi_valitr(self, valitr: Iterator) -> Iterator:
+        """ Prepare a value for `make_from_itr` (default implementation) """
+        return valitr
+
+    def make_from_itr(self, valitr: Iterator) -> Iterator:
+        """ (Final) """
+        _valitr = self.preprocess_multi_valitr(valitr)
+        if self.maker is None:
+            yield tuple(_valitr)
+        else:
+            yield self.maker(_valitr)
+
+class OneMultiResSymbol(OneResSymbol, MultiResSymbol):
+    """ """
+    @abstractproperty
+    def is_one_res(self) -> bool:
+        """ Returns if make a one value or not """
+        raise NotImplementedError()
+    
+    def make_from_itr(self, val:Any) -> Iterator:
+        if self.is_one_res:
+            yield from OneResSymbol.make_from_itr(self, val)
+        else:
+            yield from MultiResSymbol.make_from_itr(self, val)
+
+class NoResSymbol(SymbolABC):
+    """ Symbol: Ignore on results
+        (Returns no value)
+    """
+    def tryitr(self, valitr: Iterator) -> Iterator:
+        """ (Override, Final) """
+        _ = list(self.itr_for_try(valitr))
+        yield from () # Returns nothing
+
+class CharABC(SymbolABC):
     """ Single character """
     @abstractmethod
     def is_valid_char(self, ch:CharType) -> bool:
-        raise NotImplementedError()
+        """ """
 
-    def tryitr(self, chitr:SrcItr) -> Any:
+    def itr_for_try(self, chitr: SrcItr) -> Iterator:
         ch = next(chitr)
         if self.is_valid_char(ch):
-            return ch
+            yield ch
+            return
         raise SymbolTryFailed()
 
-class ExplChar(CharABC):
-    """ Char (Explicit) """
-    def __init__(self, ch:CharType, *, maker:Maker=tuple) -> None:
-        super().__init__(maker=maker)
+class OneCharABC(CharABC):
+    """ One Char ABC """
+    def __init__(self, ch:CharType) -> None:
+        super().__init__()
         self.ch = ch
 
     def is_valid_char(self, ch:CharType) -> bool:
         return ch == self.ch
 
-class Char(ExplChar, IgnoreRes):
+class Char(OneCharABC, NoResSymbol):
     """ Char (Ignored in results) """
 
-class CharNot(CharABC):
-    def __init__(self, ch:CharType, *, maker:Maker=tuple) -> None:
+class ResCharABC(CharABC, OneResSymbol):
+    def __init__(self, maker:Maker=None) -> None:
+        CharABC.__init__(self)
+        OneResSymbol.__init__(self, maker=maker)
+
+class ExplChar(OneCharABC, ResCharABC):
+    """ Char (Explicit) """
+    def __init__(self, ch:CharType, *, maker:Maker=None) -> None:
+        OneCharABC.__init__(self, ch)
+        ResCharABC.__init__(self, maker=maker)
+
+class CharNot(ResCharABC):
+    def __init__(self, ch:CharType, *, maker:Maker=None) -> None:
         super().__init__(maker=maker)
         self.ch = ch
 
     def is_valid_char(self, ch:CharType) -> bool:
         return ch != self.ch
 
-class Chars(CharABC):
-    def __init__(self, *chs:CharType, maker:Maker=tuple) -> None:
+class Chars(ResCharABC):
+    def __init__(self, *chs:CharType, maker:Maker=None) -> None:
         super().__init__(maker=maker)
         self.chset = set(chs)
 
     def is_valid_char(self, ch:CharType) -> bool:
         return ch in self.chset
 
-class CharsNot(CharABC):
-    def __init__(self, *chs:CharType, maker:Maker=tuple) -> None:
+class CharsNot(ResCharABC):
+    def __init__(self, *chs:CharType, maker:Maker=None) -> None:
         super().__init__(maker=maker)
         self.chset = set(chs)
 
@@ -112,48 +191,49 @@ class CharsNot(CharABC):
 # UpperAlphaChars = CharRange('A', 'Z')
 # LowerAlphaChars = CharRange('a', 'z')
 
-class Seq(Symbol):
+class SeqABC(SymbolABC):
+    """ Sequence of symbols (ABC) """
+    def __init__(self, *symbols:SymbolLike):
+        super().__init__()
+        self.symbols = list(map(to_symbol, symbols))
+    
+    def itr_for_try(self, chitr:SrcItr) -> Iterator:
+        for sym in self.symbols:
+            yield from sym.tryitr(chitr)
+
+class Seq(SeqABC, OneMultiResSymbol):
     """ Sequence of symbols """
     def __init__(self, *symbols:SymbolLike, maker:Maker=None):
-        super().__init__(maker=maker)
-        self.symbols = list(map(to_symbol, symbols))
-        self._n_out_syms = len(list(filter(lambda sym: not isinstance(sym, IgnoreRes), self.symbols)))
+        SeqABC.__init__(self, *symbols)
+        OneMultiResSymbol.__init__(self, maker=maker)
+        _nsyms = len(list(filter(lambda sym: not isinstance(sym, NoResSymbol), self.symbols)))
+        self._is_one_res = (_nsyms == 1)
 
-    def add(self, symbol:SymbolLike):
-        """ Add a new symbol to this sequence """
-        self.symbols.append(sym := to_symbol(symbol))
-        if not isinstance(sym, IgnoreRes):
-            self._n_out_syms += 1
-    
-    def _make(self, vitr:Iterator) -> Any:
-        """ Make a value from the processed child values
-            (Default implementation)
-        """
-        return self.make(vitr if self._n_out_syms != 1 else list(vitr)[0])
+    @property
+    def is_one_res(self) -> bool:
+        return self._is_one_res
 
-    def tryitr(self, chitr:SrcItr) -> Any:
-        """ Put a character """
-        def _itr():
-            for sym in self.symbols:
-                res = sym.tryitr(chitr)
-                if not isinstance(sym, IgnoreRes):
-                    yield res
-        return self._make(_itr())
+class MultiSeq(SeqABC, MultiResSymbol):
+    """ Sequence of symbols (Returns multi values) """
+    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
+        SeqABC.__init__(self, *symbols)
+        MultiResSymbol.__init__(self, maker=maker)
 
-class Ignore(Seq, IgnoreRes):
+class Ignore(NoResSymbol, Seq):
     """ Sequences to ignore """
 
-class StrMaker(Symbol):
+class StrMaker(OneResSymbol):
     """ Symbol which makes string """
-    def _make(self, seq_res:Iterator) -> Any:
-        return ''.join(seq_res)
+    def preprocess_one_valitr(self, valitr: Iterator) -> Any:
+        return ''.join(valitr)
 
-class ExplStr(StrMaker, Seq):
+class ExplStr(StrMaker, SeqABC):
     """ String (Explicit) """
     def __init__(self, chseq:str):
-        super().__init__(*(ExplChar(ch) for ch in chseq))
+        StrMaker.__init__(self)
+        SeqABC.__init__(self, *(ExplChar(ch) for ch in chseq))
 
-class Str(ExplStr, IgnoreRes):
+class Str(ExplStr, OneResSymbol):
     """ String (Ignored in results) """
     def __init__(self, chseq:str, *, value:Any=str):
         """
@@ -161,77 +241,95 @@ class Str(ExplStr, IgnoreRes):
             value: The The specific value which corresponds to `chseq`
                    (use `str` to return the original string)
         """
-        super().__init__(chseq)
+        ExplStr.__init__(self, chseq)
+        OneResSymbol.__init__(self, maker=self._maker)
         self.value = value
 
-    def _make(self, seq_res:Iterator) -> Any:
+    def _maker(self, text:Any) -> Any:
         if self.value is str:
-            return super().make(seq_res)
-        _ = tuple(seq_res) # Try the rule sequence 
+            return text
         return self.value
 
-class Rep(Symbol):
+class RepABC(SymbolABC):
     """ Repeat """
-    def __init__(self, *symbols:SymbolLike, child_maker:Maker=None, min:Optional[int]=None, max:Optional[int]=None, maker:Maker=None):
-        super().__init__(maker=maker)
+    def __init__(self, *symbols:SymbolLike, child_maker:Maker=None, min:Optional[int]=None, max:Optional[int]=None):
+        super().__init__()
         self.child_symbol = Seq(*symbols, maker=child_maker)
         self.min = min
         self.max = max
 
-    def tryitr(self, chitr:SrcItr) -> Any:
-        def _itr():
-            for i in (itertools.count() if self.max is None else range(self.max)):
-                try:
-                    with chitr as _chitr:
-                        yield self.child_symbol.tryitr(_chitr)
-                except (SymbolTryFailed, StopSrcItr):
-                    break
-            if self.min is not None and i < self.min:
-                raise SymbolTryFailed()
-        return self._make(_itr())
-        
-    def _make(self, vitr:Iterator) -> Any:
-        """ Make a value from the processed child values
-            (Override)
-        """
-        return self.make(vitr)
+    def itr_for_try(self, chitr:SrcItr) -> Iterator:
+        for i in (itertools.count() if self.max is None else range(self.max)):
+            try:
+                with chitr as _chitr:
+                    yield from self.child_symbol.tryitr(_chitr)
+            except (SymbolTryFailed, StopSrcItr):
+                break
+        if self.min is not None and i < self.min:
+            raise SymbolTryFailed()
 
-class RepStr(StrMaker, Rep):
+class IgnoreRep(RepABC, NoResSymbol):
+    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, min: Optional[int] = None, max: Optional[int] = None):
+        RepABC.__init__(self, *symbols, child_maker=child_maker, min=min, max=max)
+        NoResSymbol.__init__(self)
+
+class Rep(RepABC, MultiResSymbol):
+    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, min: Optional[int] = None, max: Optional[int] = None, maker: Maker = None):
+        RepABC.__init__(self, *symbols, child_maker=child_maker, min=min, max=max)
+        MultiResSymbol.__init__(self, maker=maker)
+
+class RepStr(RepABC, StrMaker):
     def __init__(self, *symbols:SymbolLike, min:Optional[int]=1, max:Optional[int]=None, maker:Maker=None) -> None:
-        super().__init__(*symbols, min=min, max=max, maker=maker)
+        RepABC.__init__(self, *symbols, min=min, max=max)
+        StrMaker.__init__(self, maker=maker)
 
 class Opt(Rep):
     """ Optional """
     def __init__(self, *symbols:SymbolLike, maker:Maker=None):
         super().__init__(*symbols, max=1, maker=maker)
 
-class IgnoreOpt(Opt, IgnoreRes):
+class IgnoreOpt(IgnoreRep):
     """ Optioal (ignore) """
+    def __init__(self, *symbols:SymbolLike):
+        super().__init__(*symbols, max=1)
 
-class OR(Symbol):
+class OR(OneResSymbol):
     """ OR """
     def __init__(self, *symbols:SymbolLike, maker:Maker=None):
         super().__init__(maker=maker)
         self.symbols = list(map(to_symbol, symbols))
 
-    def tryitr(self, chitr:SrcItr) -> Any:
+    def itr_for_try(self, chitr: SrcItr) -> Iterator:
         for symbol in self.symbols:
             try:
                 with chitr as _chitr:
-                    return symbol.tryitr(_chitr)
+                    yield from symbol.tryitr(_chitr)
+                    return
             except (SymbolTryFailed, StopSrcItr):
                 pass
         raise SymbolTryFailed()
+        
+    def add(self, symbol:SymbolLike):
+        """ Add a new symbol to this sequence """
+        self.symbols.append(sym := to_symbol(symbol))
 
-class Chain(Seq):
+class Chain(SeqABC, MultiResSymbol):
     """ Chain sequences """
-    def _make(self, seq_res:Iterator) -> Any:
-        return self.make(itertools.chain.from_iterable(v if isinstance(v, tuple) else (v,) for v in seq_res))
+    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
+        SeqABC.__init__(self, *symbols)
+        MultiResSymbol.__init__(self, maker=maker)
 
-class ChainChars(Seq):
+    def preprocess_multi_valitr(self, valitr: Iterator) -> Any:
+        return itertools.chain.from_iterable(valitr)
+
+class ChainChars(SeqABC, OneResSymbol):
     """ Chain characters """
-    def _make(self, seq_res:Iterator) -> Any:
-        return self.make(''.join(self._to_str(v) for v in seq_res))
+    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
+        SeqABC.__init__(self, *symbols)
+        OneResSymbol.__init__(self, maker=maker)
+
+    def preprocess_one_valitr(self, valitr: Iterator) -> Any:
+        return ''.join(self._to_str(v) for v in valitr)
 
     @classmethod
     def _to_str(cls, v) -> str:
@@ -243,6 +341,6 @@ class ChainChars(Seq):
 
 class RepSep(Seq):
     """ Repeat with separator """
-    def __init__(self, *symbols:Symbol, sep:SymbolLike, maker:Maker=None):
+    def __init__(self, *symbols:SymbolLike, sep:SymbolLike, maker:Maker=None):
         val = symbols[0] if len(symbols) == 1 else Seq(*symbols)
         super().__init__(Chain(Rep(val, sep), Opt(val), maker=maker))

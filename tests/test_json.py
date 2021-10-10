@@ -27,9 +27,10 @@ def main():
         if not text:
             break
         try:
-            print(JSON.trystr(text))
+            res = JSON.trystr(text)
+            print(res)
         except SymbolTryFailed as e:
-            print(e)
+            print('Exception: SymbolTryFailed:', e)
     
 if __name__ == '__main__':
     main()
