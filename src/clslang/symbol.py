@@ -97,14 +97,25 @@ class MultiResSymbol(ResSymbolABC):
         else:
             yield self.maker(_valitr)
 
-class OneMultiResSymbol(OneResSymbol, MultiResSymbol):
+class AnyTypeResSymbol(OneResSymbol, MultiResSymbol):
     """ """
+    @abstractproperty
+    def is_no_res(self) -> bool:
+        """ Returns if make no values or not """
+        raise NotImplementedError()
+
     @abstractproperty
     def is_one_res(self) -> bool:
         """ Returns if make a one value or not """
         raise NotImplementedError()
     
-    def make_from_itr(self, val:Any) -> Iterator:
+    def tryitr(self, valitr: Iterator) -> Iterator:
+        if self.is_no_res:
+            yield from NoResSymbol.tryitr(self, valitr)
+        else:
+            yield from ResSymbolABC.tryitr(self, valitr)
+
+    def make_from_itr(self, val:Iterator) -> Iterator:
         if self.is_one_res:
             yield from OneResSymbol.make_from_itr(self, val)
         else:
@@ -201,13 +212,21 @@ class SeqABC(SymbolABC):
         for sym in self.symbols:
             yield from sym.tryitr(chitr)
 
-class Seq(SeqABC, OneMultiResSymbol):
+class Seq(SeqABC, AnyTypeResSymbol):
     """ Sequence of symbols """
     def __init__(self, *symbols:SymbolLike, maker:Maker=None):
         SeqABC.__init__(self, *symbols)
-        OneMultiResSymbol.__init__(self, maker=maker)
-        _nsyms = len(list(filter(lambda sym: not isinstance(sym, NoResSymbol), self.symbols)))
+        AnyTypeResSymbol.__init__(self, maker=maker)
+        _nsyms = len(list(filter(
+            lambda sym: not isinstance(sym, NoResSymbol) and not (isinstance(sym, AnyTypeResSymbol) and sym.is_no_res),
+            self.symbols
+        )))
+        self._is_no_res = (_nsyms == 0)
         self._is_one_res = (_nsyms == 1)
+
+    @property
+    def is_no_res(self) -> bool:
+        return self._is_no_res
 
     @property
     def is_one_res(self) -> bool:
