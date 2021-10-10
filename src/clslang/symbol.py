@@ -10,18 +10,9 @@ from clslang.srcitr import SrcItr, StopSrcItr
 T = TypeVar('T')
 CT = TypeVar('CT') # Char type
 
-def flat_tuple_dict(tpl:Tuple[Optional[Tuple], Tuple[Hashable, Any]]) -> Dict[Hashable, List[Any]]:
-    if not tpl:
-        return {}
-    parent, (key, value) = tpl
-    cdict = flat_tuple_dict(parent) if parent is not None else {}
-    if key not in cdict:
-        cdict[key] = []
-    cdict[key].append(value)
-    return cdict
-
-CharType = int
-Maker = Callable[[Iterator], Any]
+CharType = str
+CharSeq = str
+Maker = Callable[[Any], Any]
 
 class SymbolTryFailed(Exception):
     """ Symbol Try Failed Exception """
@@ -34,8 +25,12 @@ class Symbol():
     def __init__(self, *, maker:Maker):
         self.maker = maker
 
-    def make(self, itr:Iterator):
-        return self.maker(itr)
+    def make(self, val:Any) -> Any:
+        if self.maker is None:
+            if isinstance(val, Iterator):
+                return tuple(val)
+            return val
+        return self.maker(val)
 
     @abstractmethod
     def tryitr(self, chitr:SrcItr) -> Any:
@@ -44,11 +39,23 @@ class Symbol():
     def trystr(self, chseq:Iterable) -> Any:
         return self.tryitr(SrcItr(chseq))
 
+SymbolLike = Union[Symbol, tuple, str]
+
+def to_symbol(symbol:SymbolLike) -> Symbol:
+    if isinstance(symbol, Symbol):
+        return symbol
+    if isinstance(symbol, tuple):
+        return Seq(*symbol)
+    if isinstance(symbol, str):
+        if len(symbol) == 1:
+            return Char(symbol[0])
+        return Str(symbol)
+    raise TypeError()
 
 class CharABC(Symbol):
     """ Single character """
     @abstractmethod
-    def is_valid_char(ch:CharType) -> bool:
+    def is_valid_char(self, ch:CharType) -> bool:
         raise NotImplementedError()
 
     def tryitr(self, chitr:SrcItr) -> Any:
@@ -105,53 +112,24 @@ class CharsNot(CharABC):
 # UpperAlphaChars = CharRange('A', 'Z')
 # LowerAlphaChars = CharRange('a', 'z')
 
-SymbolLike = Union[Symbol, str]
-WSType = Optional[SymbolLike]
-
 class Seq(Symbol):
     """ Sequence of symbols """
-    def __init__(self, *symbols:SymbolLike, ws:WSType=None, maker:Maker=tuple):
-        # assert all(isinstance(symbol, Symbol) for symbol in symbols), 'Invalid arguments (Symbol expected)'
+    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
         super().__init__(maker=maker)
-        self.symbols = []
-        _ws = self.to_ws_symbol(ws) if ws is not None else None
-        for i, sym in enumerate(symbols):
-            if _ws is not None and i > 0:
-                self.symbols.append(_ws)
-            self.symbols.append(self.to_symbol(sym))
-        self.is_one_symbol = len([sym for sym in self.symbols if not isinstance(sym, IgnoreRes)]) == 1
+        self.symbols = list(map(to_symbol, symbols))
+        self._n_out_syms = len(list(filter(lambda sym: not isinstance(sym, IgnoreRes), self.symbols)))
 
-    @staticmethod
-    def to_symbol(symbol:SymbolLike) -> Symbol:
-        if isinstance(symbol, Symbol):
-            return symbol
-        if isinstance(symbol, str):
-            if len(symbol) == 1:
-                return Char(symbol[0])
-            return Str(symbol)
-        raise TypeError()
-
-    @staticmethod
-    def to_ws_symbol(symbol:SymbolLike) -> Symbol:
-        if isinstance(symbol, Symbol):
-            return symbol
-        if isinstance(symbol, str):
-            if len(symbol) == 1:
-                return IgnoreOpt(Char(symbol[0]))
-            return IgnoreOpt(RepStr(Chars(*(ch for ch in symbol))))
-        raise TypeError()
+    def add(self, symbol:SymbolLike):
+        """ Add a new symbol to this sequence """
+        self.symbols.append(sym := to_symbol(symbol))
+        if not isinstance(sym, IgnoreRes):
+            self._n_out_syms += 1
     
-    def makeone(self, val) -> Any:
-        return val
-
-    def _makeseq(self, vitr:Iterator) -> Any:
-        return self.make(vitr)
-
     def _make(self, vitr:Iterator) -> Any:
-        if self.is_one_symbol:
-            vals = tuple(vitr)
-            return self.makeone(vals[0])
-        return self._makeseq(vitr)
+        """ Make a value from the processed child values
+            (Default implementation)
+        """
+        return self.make(vitr if self._n_out_syms != 1 else list(vitr)[0])
 
     def tryitr(self, chitr:SrcItr) -> Any:
         """ Put a character """
@@ -165,73 +143,76 @@ class Seq(Symbol):
 class Ignore(Seq, IgnoreRes):
     """ Sequences to ignore """
 
-class ExplStr(Seq):
+class StrMaker(Symbol):
+    """ Symbol which makes string """
+    def _make(self, seq_res:Iterator) -> Any:
+        return ''.join(seq_res)
+
+class ExplStr(StrMaker, Seq):
     """ String (Explicit) """
     def __init__(self, chseq:str):
         super().__init__(*(ExplChar(ch) for ch in chseq))
 
-    def make(self, seq_res:Iterator) -> str:
-        return ''.join(seq_res)
-
 class Str(ExplStr, IgnoreRes):
     """ String (Ignored in results) """
     def __init__(self, chseq:str, *, value:Any=str):
+        """
+            chseq: The string to find
+            value: The The specific value which corresponds to `chseq`
+                   (use `str` to return the original string)
+        """
         super().__init__(chseq)
         self.value = value
 
-    def make(self, itr:Iterator):
+    def _make(self, seq_res:Iterator) -> Any:
         if self.value is str:
-            super().make(itr)
-        _ = tuple(itr)
+            return super().make(seq_res)
+        _ = tuple(seq_res) # Try the rule sequence 
         return self.value
 
-class Rep(Seq):
+class Rep(Symbol):
     """ Repeat """
-    def __init__(self, *symbols:Symbol, min:Optional[int]=None, max:Optional[int]=None, ws:WSType=None, ws_elm:WSType=None, maker:Maker=tuple):
-        super().__init__(*symbols, ws=ws_elm, maker=maker)
+    def __init__(self, *symbols:SymbolLike, child_maker:Maker=None, min:Optional[int]=None, max:Optional[int]=None, maker:Maker=None):
+        super().__init__(maker=maker)
+        self.child_symbol = Seq(*symbols, maker=child_maker)
         self.min = min
         self.max = max
-        self.ws_rep = self.to_ws_symbol(ws) if ws is not None else None
 
     def tryitr(self, chitr:SrcItr) -> Any:
-        _super = super()
         def _itr():
             for i in (itertools.count() if self.max is None else range(self.max)):
                 try:
                     with chitr as _chitr:
-                        if self.ws_rep is not None:
-                            _ = self.ws_rep.tryitr(_chitr)
-                        yield _super.tryitr(_chitr)
+                        yield self.child_symbol.tryitr(_chitr)
                 except (SymbolTryFailed, StopSrcItr):
                     break
             if self.min is not None and i < self.min:
                 raise SymbolTryFailed()
-        return self._makeseq(_itr())
+        return self._make(_itr())
+        
+    def _make(self, vitr:Iterator) -> Any:
+        """ Make a value from the processed child values
+            (Override)
+        """
+        return self.make(vitr)
 
-class RepStr(Rep):
-    def __init__(self, *symbols:Symbol, min:Optional[int]=1, max:Optional[int]=None, maker:Maker=tuple) -> None:
+class RepStr(StrMaker, Rep):
+    def __init__(self, *symbols:SymbolLike, min:Optional[int]=1, max:Optional[int]=None, maker:Maker=None) -> None:
         super().__init__(*symbols, min=min, max=max, maker=maker)
-
-    """ Repeat characters, get string """
-    def make(self, seq_res:Iterator) -> str:
-        return ''.join(seq_res)
 
 class Opt(Rep):
     """ Optional """
-    def __init__(self, *symbols:Symbol, ws_elm:WSType=None, maker:Maker=tuple):
-        super().__init__(*symbols, max=1, ws_elm=ws_elm, maker=maker)
+    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
+        super().__init__(*symbols, max=1, maker=maker)
 
 class IgnoreOpt(Opt, IgnoreRes):
     """ Optioal (ignore) """
 
 class OR(Symbol):
     """ OR """
-    def __init__(self, *symbols:Symbol, maker:Maker=tuple):
+    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
         super().__init__(maker=maker)
-        self.symbols = list(symbols)
-
-    def add(self, symbol:Symbol):
-        self.symbols.append(symbol)
+        self.symbols = list(map(to_symbol, symbols))
 
     def tryitr(self, chitr:SrcItr) -> Any:
         for symbol in self.symbols:
@@ -245,12 +226,12 @@ class OR(Symbol):
 class Chain(Seq):
     """ Chain sequences """
     def _make(self, seq_res:Iterator) -> Any:
-        return self._makeseq(itertools.chain.from_iterable(v if isinstance(v, tuple) else (v,) for v in seq_res))
+        return self.make(itertools.chain.from_iterable(v if isinstance(v, tuple) else (v,) for v in seq_res))
 
 class ChainChars(Seq):
     """ Chain characters """
     def _make(self, seq_res:Iterator) -> Any:
-        return self.makeone(''.join(self._to_str(v) for v in seq_res))
+        return self.make(''.join(self._to_str(v) for v in seq_res))
 
     @classmethod
     def _to_str(cls, v) -> str:
@@ -262,6 +243,6 @@ class ChainChars(Seq):
 
 class RepSep(Seq):
     """ Repeat with separator """
-    def __init__(self, *symbols:Symbol, sep:Symbol, ws:WSType=None, ws_elm:WSType=None, maker:Maker=tuple):
+    def __init__(self, *symbols:Symbol, sep:SymbolLike, maker:Maker=None):
         val = symbols[0] if len(symbols) == 1 else Seq(*symbols)
-        super().__init__(Chain(Rep(val, Char(sep), ws=ws, ws_elm=ws_elm), Opt(val, ws_elm=ws_elm), ws=ws, maker=maker))
+        super().__init__(Chain(Rep(val, sep), Opt(val), maker=maker))

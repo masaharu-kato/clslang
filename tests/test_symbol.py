@@ -117,3 +117,8 @@ def test_py_list(bch, ech, sep, cts):
     rule = Seq(bch, RepSep(RepStr(CharsNot(sep, ech)), sep=sep, maker=list), ech)
     assert rule.trystr(bch + ''.join(ct + sep for ct in cts) + ech) == list(cts)
     assert rule.trystr(bch + sep.join(cts) + ech) == list(cts)
+
+
+
+if __name__ == '__main__':
+    test_legacy_list_expl('(', ')', ',', ('hoge', 'fuga'))

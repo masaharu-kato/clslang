@@ -2,7 +2,7 @@
     Source Iterator
 """
 import copy
-from typing import Generic, Iterable, Iterator, Optional, Type, TypeVar
+from typing import Generic, Iterable, Iterator, List, Optional, Sized, Type, TypeVar
 
 CT = TypeVar('CT')
 
@@ -21,7 +21,7 @@ class ItrSeq(Generic[CT], Iterable[CT]):
 
 class SrcItr(Generic[CT], Iterator[CT]):
     """ Source sequence iterator """
-    def __init__(self, seq:Iterable[CT], pos:int=0):
+    def __init__(self, seq:List[CT], pos:int=0):
         self.seq = seq
         self.pos = pos
         self.child:Optional[SrcItr] = None
@@ -42,10 +42,11 @@ class SrcItr(Generic[CT], Iterator[CT]):
     def __exit__(self, exc_type:Type[Exception], exc_value:Exception, trace):
         """ End this iterator """
         # print('exit... self:', id(self), ', parent:', id(self.parent) if self.parent else 'None')
-        if not exc_type:
-            self.pos = self.child.pos
-        self.child.seq = None
-        self.child = None
+        if self.child is not None:
+            if not exc_type:
+                self.pos = self.child.pos
+            del self.child
+            self.child = None
 
 
 def test_itr():
