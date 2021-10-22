@@ -1,4 +1,6 @@
-
+"""
+    Definitions of essential Symbol classes
+"""
 import itertools
 import sys
 from abc import abstractclassmethod, abstractmethod, abstractproperty
@@ -15,6 +17,13 @@ CT = TypeVar('CT') # Char type
 CharType = Union[int, str]
 CharSeq = Union[bytes, str]
 Maker = Optional[Callable[[Any], Any]]
+
+class _UnspecifiedType:
+    """ Unspecified type """
+
+# A value which means `unspecified` (Distinguish from the python `None`)
+Unspecified = _UnspecifiedType() 
+
 
 class SymbolTryFailed(Exception):
     """ Symbol Try Failed Exception """
@@ -34,32 +43,38 @@ class SymbolABC():
 
     @abstractmethod
     def tryitr(self, valitr:Iterator) -> Iterator:
-        """ Process values
+        """ Parse values
             (If needed, return result values)
         """
         raise NotImplementedError()
 
     def trystr(self, chseq:Iterable, *, use_all: bool=True) -> Any:
+        """ Parse a given sequence (string or bytes)
+            If use_all options is True (default),
+            assumes all characters on the sequence are used for parsing
+        """
         res = tuple(self.tryitr(srcitr := SrcItr(chseq)))[0]
         if use_all and not srcitr.is_eof():
             raise NotAllCharsUsed('Not all characters used on %s' % repr(srcitr))
         return res
 
     def debug(self, *args, **kwargs):
+        """ Print a debug output """
         if IS_DEBUG:
             print(*([' '] * self._debug_indent_lv), *args, **kwargs, file=sys.stderr)
 
-    def debug_indent(self):
-        self._debug_indent_lv += 1
+    # def debug_indent(self):
+    #     self._debug_indent_lv += 1
 
-    def debug_unindent(self):
-        if self._debug_indent_lv > 0:
-            self._debug_indent_lv -= 1
+    # def debug_unindent(self):
+    #     if self._debug_indent_lv > 0:
+    #         self._debug_indent_lv -= 1
 
 
 SymbolLike = Union[SymbolABC, tuple, bytes, str]
 
 def to_symbol(symbol: SymbolLike) -> SymbolABC:
+    """ Make a Symbol class from a symbol-like value """
     if isinstance(symbol, SymbolABC):
         return symbol
     if isinstance(symbol, tuple):
@@ -75,26 +90,28 @@ def to_symbol(symbol: SymbolLike) -> SymbolABC:
     raise TypeError(type(symbol))
 
 class ResSymbolABC(SymbolABC):
-    """ """
+    """ Symbol which returns result(s) """
     def __init__(self, *, maker: Maker):
         SymbolABC.__init__(self)
         self.maker = maker
 
     def tryitr(self, valitr: Iterator) -> Iterator:
-        """ (Override, Final) """
+        """ Process value-iterator (Override, Final) """
         return self.make_from_itr(self.itr_for_try(valitr))
         
+    @abstractmethod
     def make_from_itr(self, valitr: Iterator) -> Iterator:
-        """ """
+        """ Make a result from value-iterator (abstract) """
         raise NotImplementedError()
 
 class OneResSymbol(ResSymbolABC):
+    """ Symbol which returns just one result """
     def preprocess_one_valitr(self, valitr: Iterator) -> Any:
         """ Prepare a value for `make_from_itr` (default implementation) """
         return list(valitr)[0]
 
     def make_from_itr(self, valitr: Iterator) -> Iterator:
-        """ (Final) """
+        """ Make a result from value-iterator (Final) """
         _valitr = self.preprocess_one_valitr(valitr)
         if self.maker is None:
             yield _valitr
@@ -111,7 +128,7 @@ class MultiResSymbol(ResSymbolABC):
         return valitr
 
     def make_from_itr(self, valitr: Iterator) -> Iterator:
-        """ (Final) """
+        """ Make a result from value-iterator (Final) """
         _valitr = self.preprocess_multi_valitr(valitr)
         if self.maker is None:
             yield tuple(_valitr)
@@ -124,15 +141,15 @@ class ManyResSymbol(MultiResSymbol):
         Iterator of values is given to the `maker` argument
     """
     def make_from_itr(self, valitr: Iterator) -> Iterator:
-        """ (Final) """
+        """ Make a result from value-iterator (Final) """
         _valitr = self.preprocess_multi_valitr(valitr)
         if self.maker is None:
-            yield tuple(_valitr) # TODO: Yield a iterator directly
+            yield tuple(_valitr) # Yield a iterator directly?
         else:
             yield self.maker(_valitr)
 
 class AnyTypeResSymbol(OneResSymbol, MultiResSymbol):
-    """ """
+    """ Symbol which returns any type of result(s) """
     @abstractproperty
     def is_no_res(self) -> bool:
         """ Returns if make no values or not """
@@ -144,23 +161,25 @@ class AnyTypeResSymbol(OneResSymbol, MultiResSymbol):
         raise NotImplementedError()
     
     def tryitr(self, valitr: Iterator) -> Iterator:
+        """ Process value-iterator (Override) """
         if self.is_no_res:
             yield from NoResSymbol.tryitr(self, valitr)
         else:
             yield from ResSymbolABC.tryitr(self, valitr)
 
-    def make_from_itr(self, val:Iterator) -> Iterator:
+    def make_from_itr(self, valitr: Iterator) -> Iterator:
+        """ Make a result from values-iterator (Final) """
         if self.is_one_res:
-            yield from OneResSymbol.make_from_itr(self, val)
+            yield from OneResSymbol.make_from_itr(self, valitr)
         else:
-            yield from MultiResSymbol.make_from_itr(self, val)
+            yield from MultiResSymbol.make_from_itr(self, valitr)
 
 class NoResSymbol(SymbolABC):
     """ Symbol: Ignore on results
         (Returns no value)
     """
     def tryitr(self, valitr: Iterator) -> Iterator:
-        """ (Override, Final) """
+        """ Process value-iterator (Override, Final) """
         _ = list(self.itr_for_try(valitr))
         yield from () # Returns nothing
 
@@ -169,6 +188,7 @@ class CharABC(SymbolABC):
     @abstractmethod
     def is_valid_char(self, ch:CharType) -> bool:
         """ Returns if a character is valid """
+        raise NotImplementedError()
 
     def itr_for_try(self, chitr: SrcItr) -> Iterator:
         ch = next(chitr)
@@ -183,6 +203,7 @@ class CharWithEscapeABC(CharABC):
     @abstractmethod
     def is_escape_char(self, ch:CharType) -> bool:
         """ Returns if a character is the begin of escape """
+        raise NotImplementedError()
 
     def itr_for_try(self, chitr: SrcItr) -> Iterator:
         ch = next(chitr)
@@ -204,17 +225,19 @@ class CharWithSingleEscapeABC(CharWithEscapeABC):
         return ch == self.escape_char
 
 class CharMixinABC():
-    """ """
+    """ Symbol which requires character(s) in the __init__ """
     @abstractmethod
     def is_bytes(self) -> bool:
-        """ Return if is bytes """
+        """ Returns whether the self character(s) are bytes """
 
 class OneCharMixin(CharMixinABC):
+    """ Symbol which requires one character in the __init__ """
     def __init__(self, ch: CharType) -> None:
         CharMixinABC.__init__(self)
         self.ch = ch[0] if isinstance(ch, bytes) else ch
 
     def is_bytes(self) -> bool:
+        """ Returns whether the self character(s) are bytes """
         return isinstance(self.ch, int)
 
 class OneCharABC(CharABC, OneCharMixin):
@@ -224,21 +247,23 @@ class OneCharABC(CharABC, OneCharMixin):
         OneCharMixin.__init__(self, ch)
 
     def is_valid_char(self, ch:CharType) -> bool:
+        """ Check a given character is a valid on the self symbol (Override) """
         return ch == self.ch
 
 class Char(OneCharABC, NoResSymbol):
-    """ Char (Ignored in results) """
+    """ Character (Ignored in results) """
 
     def __repr__(self) -> str:
         return '<Char:%s>' % self.ch
 
 class ResCharABC(CharABC, OneResSymbol):
+    """ Symbol which returns a character """
     def __init__(self, maker:Maker=None) -> None:
         CharABC.__init__(self)
         OneResSymbol.__init__(self, maker=maker)
 
 class ExplChar(OneCharABC, ResCharABC):
-    """ Char (Explicit) """
+    """ Character (Explicitly returns a character) """
     def __init__(self, ch:CharType, *, maker:Maker=None) -> None:
         OneCharABC.__init__(self, ch)
         ResCharABC.__init__(self, maker=maker)
@@ -247,6 +272,7 @@ class ExplChar(OneCharABC, ResCharABC):
         return '<ExplChar:%s>' % self.ch
 
 class CharNot(ResCharABC, OneCharMixin):
+    """ All characters except a specific character """
     def __init__(self, ch:CharType, *, maker:Maker=None) -> None:
         ResCharABC.__init__(self, maker=maker)
         OneCharMixin.__init__(self, ch)
@@ -258,6 +284,7 @@ class CharNot(ResCharABC, OneCharMixin):
         return '<CharNot:%s>' % self.ch
 
 class CharNotWithEscape(CharWithSingleEscapeABC, CharNot):
+    """ All characters except a specific character with escapes """
     def __init__(self, ch: CharType, escape_char: CharType, maker:Maker=None) -> None:
         CharWithSingleEscapeABC.__init__(self, escape_char=escape_char)
         CharNot.__init__(self, ch, maker=maker)
@@ -266,6 +293,7 @@ class CharNotWithEscape(CharWithSingleEscapeABC, CharNot):
         return '<CharNotWithEscape:%s>' % self.ch
 
 class CharSetMixin(CharMixinABC):
+    """ Symbol which requires characters in the __init__ """
     def __init__(self, *chs: CharType) -> None:
         self.chset = set(chs)
         self._is_bytes = any(isinstance(ch, int) for ch in chs)
@@ -274,6 +302,7 @@ class CharSetMixin(CharMixinABC):
         return self._is_bytes
 
 class Chars(ResCharABC, CharSetMixin):
+    """ Specific set of characters """
     def __init__(self, *chs:CharType, maker:Maker=None) -> None:
         ResCharABC.__init__(self, maker=maker)
         CharSetMixin.__init__(self, *chs)
@@ -285,6 +314,7 @@ class Chars(ResCharABC, CharSetMixin):
         return '<Chars:%s>' % '|'.join([str(bytes([ch])) if isinstance(ch, int) else ch for ch in self.chset])
 
 class CharsNot(ResCharABC, CharSetMixin):
+    """ All characters except specific set of characters """
     def __init__(self, *chs:CharType, maker:Maker=None) -> None:
         ResCharABC.__init__(self, maker=maker)
         CharSetMixin.__init__(self, *chs)
@@ -296,6 +326,7 @@ class CharsNot(ResCharABC, CharSetMixin):
         return '<Chars:%s>' % '|'.join([str(bytes([ch])) if isinstance(ch, int) else ch for ch in self.chset])
 
 class CharsNotWithEscape(CharWithSingleEscapeABC, CharsNot):
+    """ All characters except specific set of characters with escape sequences """
     def __init__(self, *chs: CharType, escape_char: CharType, maker:Maker=None) -> None:
         CharWithSingleEscapeABC.__init__(self, escape_char=escape_char)
         CharsNot.__init__(self, *chs, maker=maker)
@@ -382,17 +413,22 @@ class StrMaker(OneResSymbol):
     def preprocess_one_valitr(self, valitr: Iterator) -> Any:
         return ''.join(valitr) if not self.is_bytes else bytes(valitr)
 
-class Str(NoResSymbol, SeqABC):
-    """ String (Ignored in results) """
+class StrABC(SeqABC):
+    """ String (Sequence of characters) ABC """
     def __init__(self, chseq: CharSeq):
-        NoResSymbol.__init__(self)
         SeqABC.__init__(self, *(ExplChar(ch) for ch in chseq))
 
-class ExplStr(StrMaker, Str):
-    """ String (Explicit) """
+class Str(StrABC, NoResSymbol):
+    """ String (Ignored in results) """
+    def __init__(self, chseq: CharSeq):
+        StrABC.__init__(self, chseq)
+        NoResSymbol.__init__(self)
+
+class ExplStr(StrABC, StrMaker):
+    """ String (Shown in results) """
     def __init__(self, chseq: CharSeq, maker: Maker=None):
+        StrABC.__init__(self, chseq)
         StrMaker.__init__(self, is_bytes=isinstance(chseq, bytes), maker=maker)
-        Str.__init__(self, chseq)
 
 class CustomStr(ExplStr):
     """ String (Ignored in results) """
@@ -410,16 +446,16 @@ class Keyword(CustomStr):
         CustomStr.__init__(self, chseq, maker=lambda _: value)
 
 class RepABC(SymbolABC):
-    """ Repeat """
-    def __init__(self, *symbols:SymbolLike, child_maker:Maker=None, min:Optional[int]=None, max:Optional[int]=None):
+    """ Repeat symbols ABC """
+    def __init__(self, *symbols:SymbolLike, child_maker:Maker=None, nmin:Optional[int]=None, nmax:Optional[int]=None):
         SymbolABC.__init__(self)
         self.child_symbol = Seq(*symbols, maker=child_maker)
-        self.min = min
-        self.max = max
+        self.min = nmin
+        self.max = nmax
 
     def itr_for_try(self, chitr:SrcItr) -> Iterator:
         i = 0
-        for i in (itertools.count() if self.max is None else range(self.max)):
+        for i in itertools.count() if self.max is None else range(self.max):
             try:
                 with chitr as _chitr:
                     yield from self.child_symbol.tryitr(_chitr)
@@ -429,34 +465,54 @@ class RepABC(SymbolABC):
             raise SymbolTryFailed()
 
 class IgnoreRep(RepABC, NoResSymbol):
-    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, min: Optional[int] = None, max: Optional[int] = None):
-        RepABC.__init__(self, *symbols, child_maker=child_maker, min=min, max=max)
+    """ Repeat symbols (Ignore results) """
+    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, nmin: Optional[int] = None, nmax: Optional[int] = None):
+        RepABC.__init__(self, *symbols, child_maker=child_maker, nmin=nmin, nmax=nmax)
         NoResSymbol.__init__(self)
 
 class Rep(RepABC, ManyResSymbol):
-    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, min: Optional[int] = None, max: Optional[int] = None, maker: Maker = None):
-        RepABC.__init__(self, *symbols, child_maker=child_maker, min=min, max=max)
+    """ Repeat symbols """
+    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, nmin: Optional[int] = None, nmax: Optional[int] = None, maker: Maker = None):
+        RepABC.__init__(self, *symbols, child_maker=child_maker, nmin=nmin, nmax=nmax)
         ManyResSymbol.__init__(self, maker=maker)
 
 class RepStr(RepABC, StrMaker):
-    def __init__(self, *symbols: SymbolLike, min:Optional[int]=1, max:Optional[int]=None, maker: Maker=None) -> None:
-        RepABC.__init__(self, *symbols, min=min, max=max)
+    """ Repeat symbols and make a result as a string """
+    def __init__(self, *symbols: SymbolLike, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None) -> None:
+        RepABC.__init__(self, *symbols, nmin=nmin, nmax=nmax)
         StrMaker.__init__(self, is_bytes=False, maker=maker)
 
 class RepBytes(RepABC, StrMaker):
-    def __init__(self, *symbols: SymbolLike, min:Optional[int]=1, max:Optional[int]=None, maker: Maker=None) -> None:
-        RepABC.__init__(self, *symbols, min=min, max=max)
+    """ Repeat symbols and make a result as a bytes """
+    def __init__(self, *symbols: SymbolLike, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None) -> None:
+        RepABC.__init__(self, *symbols, nmin=nmin, nmax=nmax)
         StrMaker.__init__(self, is_bytes=True, maker=maker)
 
 class Opt(Rep):
-    """ Optional """
-    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
-        Rep.__init__(self, *symbols, max=1, maker=maker)
+    """ Optional symbols """
+    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, maker: Maker = None, none_val = Unspecified):
+        Rep.__init__(self, *symbols, nmax=1, child_maker=child_maker, maker=maker)
+        self.none_val = none_val
+        
+    def make_from_itr(self, valitr: Iterator) -> Iterator:
+        """ Make a result from value-iterator (Override) """
+        _valitr = self.preprocess_multi_valitr(valitr)
+        if self.maker is None:
+            if self.none_val is Unspecified:
+                yield tuple(_valitr) # Yield a iterator directly?
+            else:
+                if _args := tuple(_valitr):
+                    assert len(_args) == 1
+                    yield _args[0]
+                else:
+                    yield self.none_val
+        else:
+            yield self.maker(_valitr)
 
 class IgnoreOpt(IgnoreRep):
     """ Optioal (ignore) """
-    def __init__(self, *symbols:SymbolLike):
-        IgnoreRep.__init__(self, *symbols, max=1)
+    def __init__(self, *symbols: SymbolLike):
+        IgnoreRep.__init__(self, *symbols, nmax=1)
 
 class OR(OneResSymbol):
     """ OR """
