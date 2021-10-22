@@ -134,7 +134,7 @@ class CharABC(SymbolABC):
     """ Single character """
     @abstractmethod
     def is_valid_char(self, ch:CharType) -> bool:
-        """ """
+        """ Returns if a character is valid """
 
     def itr_for_try(self, chitr: SrcItr) -> Iterator:
         ch = next(chitr)
@@ -142,6 +142,32 @@ class CharABC(SymbolABC):
             yield ch
             return
         raise SymbolTryFailed()
+
+class CharWithEscapeABC(CharABC):
+    """ Character with escape """
+
+    @abstractmethod
+    def is_escape_char(self, ch:CharType) -> bool:
+        """ Returns if a character is the begin of escape """
+
+    def itr_for_try(self, chitr: SrcItr) -> Iterator:
+        ch = next(chitr)
+        if self.is_escape_char(ch):
+            yield next(chitr)
+            return
+        if self.is_valid_char(ch):
+            yield ch
+            return
+        raise SymbolTryFailed()
+
+class CharWithSingleEscapeABC(CharWithEscapeABC):
+    """ Character with escape """
+    def __init__(self, *, escape_char) -> None:
+        super().__init__()
+        self.escape_char = escape_char
+
+    def is_escape_char(self, ch: CharType) -> bool:
+        return ch == self.escape_char
 
 class OneCharABC(CharABC):
     """ One Char ABC """
@@ -174,6 +200,11 @@ class CharNot(ResCharABC):
     def is_valid_char(self, ch:CharType) -> bool:
         return ch != self.ch
 
+class CharNotWithEscape(CharWithSingleEscapeABC, CharNot):
+    def __init__(self, ch: CharType, escape_char: CharType, maker:Maker=None) -> None:
+        CharWithSingleEscapeABC.__init__(self, escape_char)
+        CharNot.__init__(self, ch, maker=maker)
+
 class Chars(ResCharABC):
     def __init__(self, *chs:CharType, maker:Maker=None) -> None:
         super().__init__(maker=maker)
@@ -189,6 +220,11 @@ class CharsNot(ResCharABC):
 
     def is_valid_char(self, ch:CharType) -> bool:
         return ch not in self.chset
+
+class CharsNotWithEscape(CharWithSingleEscapeABC, CharsNot):
+    def __init__(self, *chs: CharType, escape_char: CharType, maker:Maker=None) -> None:
+        CharWithSingleEscapeABC.__init__(self, escape_char=escape_char)
+        CharsNot.__init__(self, *chs, maker=maker)
 
 # class CharRange(CharABC):
 #     def __init__(self, ch_first:CharType, ch_last:CharType) -> None:

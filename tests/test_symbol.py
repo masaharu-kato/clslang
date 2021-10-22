@@ -1,7 +1,7 @@
 """
 """
 from clslang.srcitr import StopSrcItr
-from clslang.symbol import OR, Chain, CharNot, CharsNot, ExplChar, ExplStr, Opt, Rep, RepSep, RepStr, Seq, Str, SymbolTryFailed, Char
+from clslang.symbol import OR, Chain, CharNot, CharsNot, CharsNotWithEscape, ExplChar, ExplStr, Opt, Rep, RepSep, RepStr, Seq, Str, SymbolTryFailed, Char
 
 import pytest
 
@@ -118,6 +118,21 @@ def test_py_list(bch, ech, sep, cts):
     assert rule.trystr(bch + ''.join(ct + sep for ct in cts) + ech) == list(cts)
     assert rule.trystr(bch + sep.join(cts) + ech) == list(cts)
 
+
+list_test_escaped_params = ('bch, ech, sep, esc_ch, cts, res_cts', [
+    ('(', ')', ',', '\\', (), ()),
+    ('(', ')', ',', '\\', ('on\\)e',), ('on)e',)),
+    ('(', ')', ',', '\\', ('hoge', 'fug\\(a\\)a'), ('hoge', 'fug(a)a')),
+    ('(', ')', ',', '.' , ('hoge', 'fug.)aae', 'piyo.piii'), ('hoge', 'fug)aae', 'piyopiii')),
+    ('[', ']', ' ', '\\', ('poga', 'efa,f23', 'fee232f'), ('poga', 'efa,f23', 'fee232f')),
+    ('{', '}', ',', '\\', ('bd', '\\{123', 'vw459vv\\}', 'pipo'), ('bd', '{123', 'vw459vv}', 'pipo')),
+])
+
+@pytest.mark.parametrize(*list_test_escaped_params)
+def test_list_test_escaped_params(bch, ech, sep, esc_ch, cts, res_cts):
+    rule = Seq(bch, RepSep(RepStr(CharsNotWithEscape(sep, ech, escape_char=esc_ch)), sep=sep, maker=list), ech)
+    assert rule.trystr(bch + ''.join(ct + sep for ct in cts) + ech) == list(res_cts)
+    assert rule.trystr(bch + sep.join(cts) + ech) == list(res_cts)
 
 
 if __name__ == '__main__':
