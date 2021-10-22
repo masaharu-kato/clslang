@@ -2,6 +2,7 @@
     Definitions of essential Symbol classes
 """
 import itertools
+import functools
 import sys
 from abc import abstractclassmethod, abstractmethod, abstractproperty
 from typing import Any, Callable, Dict, Generic, Hashable, Iterable, Iterator, List, Optional, Set, Tuple, Type, TypeVar, Union
@@ -251,6 +252,9 @@ class OneCharABC(CharABC, OneCharMixin):
         """ Check a given character is a valid on the self symbol (Override) """
         return ch == self.ch
 
+    def tree(self) -> dict:
+        return {self.ch: True, None: False}
+
 class Char(OneCharABC, NoResSymbol):
     """ Character (Ignored in results) """
 
@@ -280,6 +284,9 @@ class CharNot(ResCharABC, OneCharMixin):
 
     def is_valid_char(self, ch:CharType) -> bool:
         return ch != self.ch
+
+    def tree(self) -> dict:
+        return {self.ch: False, None: True}
 
     def __repr__(self) -> str:
         return '<CharNot:%s>' % self.ch
@@ -311,6 +318,9 @@ class Chars(ResCharABC, CharSetMixin):
     def is_valid_char(self, ch:CharType) -> bool:
         return ch in self.chset
 
+    def tree(self) -> dict:
+        return {**{ch: True for ch in self.chset}, None: False}
+
     def __repr__(self) -> str:
         return '<Chars:%s>' % '|'.join([str(bytes([ch])) if isinstance(ch, int) else ch for ch in self.chset])
 
@@ -322,6 +332,9 @@ class CharsNot(ResCharABC, CharSetMixin):
 
     def is_valid_char(self, ch:CharType) -> bool:
         return ch not in self.chset
+
+    def tree(self) -> dict:
+        return {**{ch: False for ch in self.chset}, None: True}
 
     def __repr__(self) -> str:
         return '<Chars:%s>' % '|'.join([str(bytes([ch])) if isinstance(ch, int) else ch for ch in self.chset])
@@ -359,6 +372,9 @@ class SeqABC(SymbolABC):
             # self.debug_indent()
             yield from sym.tryitr(chitr)
             # self.debug_unindent()
+
+    def tree(self) -> dict:
+        return functools.reduce(lambda base, sym: {sym: base}, reversed((*self.symbols, True)))
 
 class Seq(SeqABC, AnyTypeResSymbol):
     """ Sequence of symbols """
