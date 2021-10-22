@@ -1,7 +1,7 @@
 """
 """
 from clslang.srcitr import StopSrcItr
-from clslang.symbol import OR, Chain, CharNot, CharsNot, CharsNotWithEscape, ExplChar, ExplStr, Opt, Rep, RepSep, RepStr, Seq, Str, SymbolTryFailed, Char
+from clslang.symbol import OR, Chain, CharNot, Chars, CharsNot, CharsNotWithEscape, ExplChar, ExplStr, NotAllCharsUsed, Opt, Rep, RepSep, RepStr, Seq, Str, SymbolTryFailed, Char
 
 import pytest
 
@@ -118,7 +118,6 @@ def test_py_list(bch, ech, sep, cts):
     assert rule.trystr(bch + ''.join(ct + sep for ct in cts) + ech) == list(cts)
     assert rule.trystr(bch + sep.join(cts) + ech) == list(cts)
 
-
 list_test_escaped_params = ('bch, ech, sep, esc_ch, cts, res_cts', [
     ('(', ')', ',', '\\', (), ()),
     ('(', ')', ',', '\\', ('on\\)e',), ('on)e',)),
@@ -133,6 +132,19 @@ def test_list_test_escaped_params(bch, ech, sep, esc_ch, cts, res_cts):
     rule = Seq(bch, RepSep(RepStr(CharsNotWithEscape(sep, ech, escape_char=esc_ch)), sep=sep, maker=list), ech)
     assert rule.trystr(bch + ''.join(ct + sep for ct in cts) + ech) == list(res_cts)
     assert rule.trystr(bch + sep.join(cts) + ech) == list(res_cts)
+
+@pytest.mark.parametrize('num, suffix', [
+    ('0143365', 'hogefuga'),
+    ('435', 'jbs931'),
+    ('8423', '.45'),
+])
+def test_use_all(num, suffix):
+    rule = RepStr(Chars(*'0123456789'))
+    assert rule.trystr(num, use_all=False) == num
+    assert rule.trystr(num, use_all=True) == num
+    assert rule.trystr(num + suffix, use_all=False) == num
+    with pytest.raises(NotAllCharsUsed):
+        assert rule.trystr(num + suffix, use_all=True)
 
 
 if __name__ == '__main__':

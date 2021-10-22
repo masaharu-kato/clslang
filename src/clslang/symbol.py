@@ -39,11 +39,10 @@ class SymbolABC():
         """
         raise NotImplementedError()
 
-    def trystr(self, chseq:Iterable, *, all:bool=True) -> Any:
+    def trystr(self, chseq:Iterable, *, use_all: bool=True) -> Any:
         res = tuple(self.tryitr(srcitr := SrcItr(chseq)))[0]
-        # print('is_eof: %d' % srcitr.is_eof())
-        # if all and not srcitr.is_eof():
-        #   raise NotAllCharsUsed('Not all characters used on %s' % repr(srcitr))
+        if use_all and not srcitr.is_eof():
+            raise NotAllCharsUsed('Not all characters used on %s' % repr(srcitr))
         return res
 
     def debug(self, *args, **kwargs):
