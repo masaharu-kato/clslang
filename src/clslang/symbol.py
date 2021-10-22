@@ -17,6 +17,7 @@ CT = TypeVar('CT') # Char type
 CharType = Union[int, str]
 CharSeq = Union[bytes, str]
 Maker = Optional[Callable[[Any], Any]]
+Name = Optional[str]
 
 class _UnspecifiedType:
     """ Unspecified type """
@@ -33,8 +34,6 @@ class NotAllCharsUsed(Exception):
 
 class SymbolABC():
     """ Symbol ABC """
-    def __init__(self):
-        pass
 
     @abstractmethod
     def itr_for_try(self, chitr:SrcItr) -> Iterator:
@@ -83,10 +82,14 @@ def to_symbol(symbol: SymbolLike) -> SymbolABC:
     raise TypeError(type(symbol))
 
 class ResSymbolABC(SymbolABC):
-    """ Symbol which returns result(s) """
-    def __init__(self, *, maker: Maker):
+    """ Symbol which may returns result(s) """
+    def __init__(self, *, maker: Maker, name: Name):
         SymbolABC.__init__(self)
+        self.name = name
         self.maker = maker
+
+    def __repr__(self) -> str:
+        return '<%s>' % (self.name or type(self))
 
     def tryitr(self, valitr: Iterator) -> Iterator:
         """ Process value-iterator (Override, Final) """
@@ -96,6 +99,11 @@ class ResSymbolABC(SymbolABC):
     def make_from_itr(self, valitr: Iterator) -> Iterator:
         """ Make a result from value-iterator (abstract) """
         raise NotImplementedError()
+
+def Named(name: str, symbol: ResSymbolABC):
+    """ Symbol with a name """
+    symbol.name = name
+    return symbol
 
 class OneResSymbol(ResSymbolABC):
     """ Symbol which returns just one result """
@@ -235,7 +243,7 @@ class OneCharMixin(CharMixinABC):
 
 class OneCharABC(CharABC, OneCharMixin):
     """ One Char ABC """
-    def __init__(self, ch:CharType) -> None:
+    def __init__(self, ch: CharType) -> None:
         CharABC.__init__(self)
         OneCharMixin.__init__(self, ch)
 
@@ -251,23 +259,23 @@ class Char(OneCharABC, NoResSymbol):
 
 class ResCharABC(CharABC, OneResSymbol):
     """ Symbol which returns a character """
-    def __init__(self, maker:Maker=None) -> None:
+    def __init__(self, maker: Maker, name: Name) -> None:
         CharABC.__init__(self)
-        OneResSymbol.__init__(self, maker=maker)
+        OneResSymbol.__init__(self, maker=maker, name=name)
 
 class ExplChar(OneCharABC, ResCharABC):
     """ Character (Explicitly returns a character) """
-    def __init__(self, ch:CharType, *, maker:Maker=None) -> None:
+    def __init__(self, ch: CharType, *, maker: Maker=None, name: Name=None) -> None:
         OneCharABC.__init__(self, ch)
-        ResCharABC.__init__(self, maker=maker)
+        ResCharABC.__init__(self, maker=maker, name=name)
 
     def __repr__(self) -> str:
         return '<ExplChar:%s>' % self.ch
 
 class CharNot(ResCharABC, OneCharMixin):
     """ All characters except a specific character """
-    def __init__(self, ch:CharType, *, maker:Maker=None) -> None:
-        ResCharABC.__init__(self, maker=maker)
+    def __init__(self, ch: CharType, *, maker: Maker=None, name: Name=None) -> None:
+        ResCharABC.__init__(self, maker=maker, name=name)
         OneCharMixin.__init__(self, ch)
 
     def is_valid_char(self, ch:CharType) -> bool:
@@ -296,8 +304,8 @@ class CharSetMixin(CharMixinABC):
 
 class Chars(ResCharABC, CharSetMixin):
     """ Specific set of characters """
-    def __init__(self, *chs:CharType, maker:Maker=None) -> None:
-        ResCharABC.__init__(self, maker=maker)
+    def __init__(self, *chs:CharType, maker:Maker=None, name: Name=None) -> None:
+        ResCharABC.__init__(self, maker=maker, name=name)
         CharSetMixin.__init__(self, *chs)
 
     def is_valid_char(self, ch:CharType) -> bool:
@@ -308,8 +316,8 @@ class Chars(ResCharABC, CharSetMixin):
 
 class CharsNot(ResCharABC, CharSetMixin):
     """ All characters except specific set of characters """
-    def __init__(self, *chs:CharType, maker:Maker=None) -> None:
-        ResCharABC.__init__(self, maker=maker)
+    def __init__(self, *chs:CharType, maker:Maker=None, name: Name=None) -> None:
+        ResCharABC.__init__(self, maker=maker, name=name)
         CharSetMixin.__init__(self, *chs)
 
     def is_valid_char(self, ch:CharType) -> bool:
@@ -320,9 +328,9 @@ class CharsNot(ResCharABC, CharSetMixin):
 
 class CharsNotWithEscape(CharWithSingleEscapeABC, CharsNot):
     """ All characters except specific set of characters with escape sequences """
-    def __init__(self, *chs: CharType, escape_char: CharType, maker:Maker=None) -> None:
+    def __init__(self, *chs: CharType, escape_char: CharType, maker:Maker=None, name: Name=None) -> None:
         CharWithSingleEscapeABC.__init__(self, escape_char=escape_char)
-        CharsNot.__init__(self, *chs, maker=maker)
+        CharsNot.__init__(self, *chs, maker=maker, name=name)
 
     def __repr__(self) -> str:
         return '<CharsNotWithEscape:%s>' % '|'.join(self.chset)
@@ -341,7 +349,7 @@ class CharsNotWithEscape(CharWithSingleEscapeABC, CharsNot):
 
 class SeqABC(SymbolABC):
     """ Sequence of symbols (ABC) """
-    def __init__(self, *symbols:SymbolLike):
+    def __init__(self, *symbols: SymbolLike):
         SymbolABC.__init__(self)
         self.symbols = list(map(to_symbol, symbols))
     
@@ -354,9 +362,9 @@ class SeqABC(SymbolABC):
 
 class Seq(SeqABC, AnyTypeResSymbol):
     """ Sequence of symbols """
-    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
+    def __init__(self, *symbols: SymbolLike, maker: Maker=None, name: Name=None):
         SeqABC.__init__(self, *symbols)
-        AnyTypeResSymbol.__init__(self, maker=maker)
+        AnyTypeResSymbol.__init__(self, maker=maker, name=name)
         _nsyms = len(list(filter(
             lambda sym: not isinstance(sym, NoResSymbol) and not (isinstance(sym, AnyTypeResSymbol) and sym.is_no_res),
             self.symbols
@@ -374,17 +382,17 @@ class Seq(SeqABC, AnyTypeResSymbol):
 
 class MultiSeq(SeqABC, MultiResSymbol):
     """ Sequence of symbols (Returns multi values) """
-    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
+    def __init__(self, *symbols: SymbolLike, maker: Maker=None, name: Name=None):
         SeqABC.__init__(self, *symbols)
-        MultiResSymbol.__init__(self, maker=maker)
+        MultiResSymbol.__init__(self, maker=maker, name=name)
 
 class Ignore(NoResSymbol, Seq):
     """ Sequences to ignore """
 
 class Except(OneResSymbol):
     """ Symbol except a specific symbol """
-    def __init__(self, sym_base: SymbolLike, sym_except: SymbolLike):
-        OneResSymbol.__init__(self, maker=None)
+    def __init__(self, sym_base: SymbolLike, sym_except: SymbolLike, name: Name=None):
+        OneResSymbol.__init__(self, maker=None, name=name)
         self.sym_base   = to_symbol(sym_base)
         self.sym_except = to_symbol(sym_except)
 
@@ -399,8 +407,8 @@ class Except(OneResSymbol):
 
 class StrMaker(OneResSymbol):
     """ Symbol which makes string """
-    def __init__(self, *, is_bytes: bool, maker: Maker):
-        OneResSymbol.__init__(self, maker=maker)
+    def __init__(self, *, is_bytes: bool, maker: Maker, name: Name):
+        OneResSymbol.__init__(self, maker=maker, name=name)
         self.is_bytes = is_bytes
 
     def preprocess_one_valitr(self, valitr: Iterator) -> Any:
@@ -419,14 +427,14 @@ class Str(StrABC, NoResSymbol):
 
 class ExplStr(StrABC, StrMaker):
     """ String (Shown in results) """
-    def __init__(self, chseq: CharSeq, maker: Maker=None):
+    def __init__(self, chseq: CharSeq, maker: Maker=None, name: Name=None):
         StrABC.__init__(self, chseq)
-        StrMaker.__init__(self, is_bytes=isinstance(chseq, bytes), maker=maker)
+        StrMaker.__init__(self, is_bytes=isinstance(chseq, bytes), maker=maker, name=name)
 
 class CustomStr(ExplStr):
     """ String (Ignored in results) """
-    def __init__(self, chseq: CharSeq, *, maker: Maker):
-        ExplStr.__init__(self, chseq, maker=maker)
+    def __init__(self, chseq: CharSeq, *, maker: Maker, name: Name=None):
+        ExplStr.__init__(self, chseq, maker=maker, name=name)
 
 class Keyword(CustomStr):
     """ String (Ignored in results) """
@@ -440,7 +448,7 @@ class Keyword(CustomStr):
 
 class RepABC(SymbolABC):
     """ Repeat symbols ABC """
-    def __init__(self, *symbols:SymbolLike, child_maker:Maker=None, nmin:Optional[int]=None, nmax:Optional[int]=None):
+    def __init__(self, *symbols: SymbolLike, child_maker: Maker=None, nmin: Optional[int]=None, nmax: Optional[int]=None):
         SymbolABC.__init__(self)
         self.child_symbol = Seq(*symbols, maker=child_maker)
         self.min = nmin
@@ -465,26 +473,30 @@ class IgnoreRep(RepABC, NoResSymbol):
 
 class Rep(RepABC, ManyResSymbol):
     """ Repeat symbols """
-    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, nmin: Optional[int] = None, nmax: Optional[int] = None, maker: Maker = None):
+    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, nmin: Optional[int] = None, nmax: Optional[int] = None, maker: Maker = None, name: Name=None):
         RepABC.__init__(self, *symbols, child_maker=child_maker, nmin=nmin, nmax=nmax)
-        ManyResSymbol.__init__(self, maker=maker)
+        ManyResSymbol.__init__(self, maker=maker, name=name)
 
-class RepStr(RepABC, StrMaker):
+class RepStrABC(RepABC, StrMaker):
+    """ Repeat symbols and make a result as a string/bytes """
+    def __init__(self, *symbols: SymbolLike, is_bytes: bool, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None, name: Name=None) -> None:
+        RepABC.__init__(self, *symbols, nmin=nmin, nmax=nmax)
+        StrMaker.__init__(self, is_bytes=is_bytes, maker=maker, name=name)
+
+class RepStr(RepStrABC):
     """ Repeat symbols and make a result as a string """
-    def __init__(self, *symbols: SymbolLike, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None) -> None:
-        RepABC.__init__(self, *symbols, nmin=nmin, nmax=nmax)
-        StrMaker.__init__(self, is_bytes=False, maker=maker)
+    def __init__(self, *symbols: SymbolLike, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None, name: Name=None) -> None:
+        RepStrABC.__init__(self, *symbols, is_bytes=False, nmin=nmin, nmax=nmax, maker=maker, name=name)
 
-class RepBytes(RepABC, StrMaker):
+class RepBytes(RepStrABC):
     """ Repeat symbols and make a result as a bytes """
-    def __init__(self, *symbols: SymbolLike, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None) -> None:
-        RepABC.__init__(self, *symbols, nmin=nmin, nmax=nmax)
-        StrMaker.__init__(self, is_bytes=True, maker=maker)
+    def __init__(self, *symbols: SymbolLike, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None, name: Name=None) -> None:
+        RepStrABC.__init__(self, *symbols, is_bytes=True, nmin=nmin, nmax=nmax, maker=maker, name=name)
 
 class Opt(Rep):
     """ Optional symbols """
-    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, maker: Maker = None, none_val = Unspecified):
-        Rep.__init__(self, *symbols, nmax=1, child_maker=child_maker, maker=maker)
+    def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, none_val = Unspecified, maker: Maker = None, name: Name=None):
+        Rep.__init__(self, *symbols, nmax=1, child_maker=child_maker, maker=maker, name=name)
         self.none_val = none_val
         
     def make_from_itr(self, valitr: Iterator) -> Iterator:
@@ -509,8 +521,8 @@ class IgnoreOpt(IgnoreRep):
 
 class OR(OneResSymbol):
     """ OR """
-    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
-        OneResSymbol.__init__(self, maker=maker)
+    def __init__(self, *symbols:SymbolLike, maker:Maker=None, name: Name=None):
+        OneResSymbol.__init__(self, maker=maker, name=name)
         self.symbols = list(map(to_symbol, symbols))
 
     def itr_for_try(self, chitr: SrcItr) -> Iterator:
@@ -529,18 +541,21 @@ class OR(OneResSymbol):
 
 class Chain(SeqABC, ManyResSymbol):
     """ Chain sequences """
-    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
+    def __init__(self, *symbols:SymbolLike, maker:Maker=None, name: Name=None):
         SeqABC.__init__(self, *symbols)
-        ManyResSymbol.__init__(self, maker=maker)
+        ManyResSymbol.__init__(self, maker=maker, name=name)
 
     def preprocess_multi_valitr(self, valitr: Iterator) -> Any:
         return itertools.chain.from_iterable(valitr)
 
-class ChainChars(SeqABC, OneResSymbol):
-    """ Chain characters """
-    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
+class ChainCharsABC(SeqABC, OneResSymbol):
+    """ Chain characters (for str/bytes) """
+    def __init__(self, *symbols: SymbolLike, maker: Maker=None, name: Name=None):
         SeqABC.__init__(self, *symbols)
-        OneResSymbol.__init__(self, maker=maker)
+        OneResSymbol.__init__(self, maker=maker, name=name)
+
+class ChainChars(ChainCharsABC):
+    """ Chain characters (for str) """
 
     def preprocess_one_valitr(self, valitr: Iterator) -> Any:
         return ''.join(self._to_str(v) for v in valitr)
@@ -553,11 +568,8 @@ class ChainChars(SeqABC, OneResSymbol):
             return ''.join(cls._to_str(_v) for _v in v)
         raise TypeError(v)
 
-class ChainBytes(SeqABC, OneResSymbol):
-    """ Chain characters """
-    def __init__(self, *symbols:SymbolLike, maker:Maker=None):
-        SeqABC.__init__(self, *symbols)
-        OneResSymbol.__init__(self, maker=maker)
+class ChainBytes(ChainCharsABC):
+    """ Chain characters (for bytes) """
 
     def preprocess_one_valitr(self, valitr: Iterator) -> Any:
         return b''.join(self._to_bytes(v) for v in valitr)
@@ -576,6 +588,6 @@ class ChainBytes(SeqABC, OneResSymbol):
 
 class RepSep(Seq):
     """ Repeat with separator """
-    def __init__(self, *symbols:SymbolLike, sep:SymbolLike, maker:Maker=None):
+    def __init__(self, *symbols:SymbolLike, sep:SymbolLike, maker:Maker=None, name: Name=None):
         val = symbols[0] if len(symbols) == 1 else Seq(*symbols)
-        Seq.__init__(self, Chain(Rep(val, sep), Opt(val), maker=maker))
+        Seq.__init__(self, Chain(Rep(val, sep), Opt(val), maker=maker, name=name))
