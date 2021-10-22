@@ -34,7 +34,7 @@ class NotAllCharsUsed(Exception):
 class SymbolABC():
     """ Symbol ABC """
     def __init__(self):
-        self._debug_indent_lv = 0
+        pass
 
     @abstractmethod
     def itr_for_try(self, chitr:SrcItr) -> Iterator:
@@ -61,15 +61,8 @@ class SymbolABC():
     def debug(self, *args, **kwargs):
         """ Print a debug output """
         if IS_DEBUG:
-            print(*([' '] * self._debug_indent_lv), *args, **kwargs, file=sys.stderr)
-
-    # def debug_indent(self):
-    #     self._debug_indent_lv += 1
-
-    # def debug_unindent(self):
-    #     if self._debug_indent_lv > 0:
-    #         self._debug_indent_lv -= 1
-
+            # print(*([' '] * self._debug_indent_lv), *args, **kwargs, file=sys.stderr)
+            print(*args, **kwargs, file=sys.stderr)
 
 SymbolLike = Union[SymbolABC, tuple, bytes, str]
 
