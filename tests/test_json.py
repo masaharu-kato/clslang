@@ -2,8 +2,9 @@
 """
 import os
 import json
+import time
 import pytest
-from clslang.symbol import OR, Chain, ChainChars, CharNot, Chars, ExplChar, IgnoreOpt, Keyword, Named, Opt, RepSep, RepStr, Seq, Str, SymbolTryFailed
+from clslang.symbol import OR, AnyChar, Chain, ChainChars, CharNot, Chars, ExplChar, IgnoreOpt, Keyword, Named, Opt, RepSep, RepStr, Seq, Str, SymbolTryFailed
 
 def make_json():
     DIGIT = Chars(*(chr(i) for i in range(ord('0'), ord('9')+1)))
@@ -11,6 +12,7 @@ def make_json():
 
     Value = OR(finalize=False)
     Value.add(String := Named('String', Seq('"', RepStr(CharNot('"')), '"')))
+    # Value.add(String := Named('String', Seq('"', RepStr(AnyChar(), end='"'), '"')))
     Value.add(Named('Real'  , ChainChars(Opt(ExplChar('-')), RepStr(DIGIT), ExplChar('.'), RepStr(DIGIT), maker=float)))
     Value.add(Named('Int'   , ChainChars(Opt(ExplChar('-')), RepStr(DIGIT), maker=int)))
     Value.add(Named('Object', Seq('{', WS, RepSep(String, WS, ':', WS, Value, sep=(WS, ',', WS), maker=dict), WS, '}')))
@@ -31,7 +33,13 @@ def test_json(datatext):
     data = json.loads(datatext)
     assert JSON.trystr(datatext) == data
 
-def main():
+def time_json_tests():
+    start_time = time.time()
+    for datatext in datatexts:
+        test_json(datatext)
+    print('%g sec.' % (time.time() - start_time))
+
+def interactive_main():
     JSON = make_json()
     while True:
         text = input()
@@ -66,6 +74,5 @@ def main():
 #     return svals
 
 if __name__ == '__main__':
-    main()
-    # for _data in make_data():
-    #     print(json.dumps(_data))
+    # interactive_main()
+    time_json_tests()

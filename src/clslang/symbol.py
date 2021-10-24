@@ -30,6 +30,9 @@ Unspecified = _UnspecifiedType()
 class SymbolTryFailed(Exception):
     """ Symbol Try Failed Exception """
 
+class RollbackIterator(Exception):
+    """ Rollback the source iterator """
+
 class NotAllCharsUsed(Exception):
     """ Not all given string used Exception """
 
@@ -115,6 +118,11 @@ class ResSymbolABC(SymbolABC):
     def make_from_itr(self, valitr: Iterator) -> Iterator:
         """ Make a result from value-iterator (abstract) """
         raise NotImplementedError()
+
+    @abstractmethod
+    def make_after(self) -> Iterator:
+        ...
+
 
 def Named(name: str, symbol: ResSymbolABC):
     """ Symbol with a name """
@@ -295,6 +303,23 @@ class ExplChar(OneCharABC, ResCharABC):
     def __repr__(self) -> str:
         return '<ExplChar:%s>' % self.ch
 
+class AnyChar(ResCharABC):
+    """ All characters """
+    def __init__(self, *, maker: Maker=None, name: Name=None) -> None:
+        ResCharABC.__init__(self, maker=maker, name=name)
+
+    def is_valid_char(self, ch:CharType) -> bool:
+        return True
+
+    def tree(self) -> dict:
+        return {None: True}
+
+    def _propvals(self) -> Hashable:
+        return ()
+
+    def __repr__(self) -> str:
+        return '<AnyChar>'
+
 class CharNot(ResCharABC, OneCharMixin):
     """ All characters except a specific character """
     def __init__(self, ch: CharType, *, maker: Maker=None, name: Name=None) -> None:
@@ -446,10 +471,11 @@ class Except(OneResSymbol):
     def itr_for_try(self, chitr: SrcItr) -> Iterator:
         try:
             with chitr as _chitr:
-                _ = list(self.sym_except.tryitr(_chitr))
+                all(v or True for v in self.sym_except.tryitr(_chitr))
+                raise RollbackIterator()
         except SymbolTryFailed:
             yield from self.sym_base.tryitr(chitr)
-        else:
+        except RollbackIterator:
             raise SymbolTryFailed('Except-Symbol detected.')
 
     def _propvals(self) -> Hashable:
@@ -498,15 +524,25 @@ class Keyword(CustomStr):
 
 class RepABC(SymbolABC):
     """ Repeat symbols ABC """
-    def __init__(self, *symbols: SymbolLike, child_maker: Maker=None, nmin: Optional[int]=None, nmax: Optional[int]=None):
+    def __init__(self, *symbols: SymbolLike, end: Optional[SymbolLike]=None, child_maker: Maker=None, nmin: Optional[int]=None, nmax: Optional[int]=None):
         SymbolABC.__init__(self)
         self.child_symbol = Seq(*symbols, maker=child_maker)
+        self.end_symbol = to_symbol(end) if end is not None else None
         self.min = nmin
         self.max = nmax
 
     def itr_for_try(self, chitr:SrcItr) -> Iterator:
         i = 0
         for i in itertools.count() if self.max is None else range(self.max):
+            if self.end_symbol is not None:    
+                try:
+                    with chitr as _chitr:
+                        all(v or True for v in self.end_symbol.tryitr(_chitr))
+                        raise RollbackIterator()
+                except SymbolTryFailed:
+                    pass
+                except RollbackIterator:
+                    break
             try:
                 with chitr as _chitr:
                     yield from self.child_symbol.tryitr(_chitr)
@@ -516,7 +552,7 @@ class RepABC(SymbolABC):
             raise SymbolTryFailed()
 
     def _propvals(self) -> Hashable:
-        return self.child_symbol, self.min, self.max
+        return self.child_symbol, self.end_symbol, self.min, self.max
 
 class IgnoreRep(RepABC, NoResSymbol):
     """ Repeat symbols (Ignore results) """
@@ -530,21 +566,22 @@ class Rep(RepABC, ManyResSymbol):
         RepABC.__init__(self, *symbols, child_maker=child_maker, nmin=nmin, nmax=nmax)
         ManyResSymbol.__init__(self, maker=maker, name=name)
 
+
 class RepStrABC(RepABC, StrMaker):
     """ Repeat symbols and make a result as a string/bytes """
-    def __init__(self, *symbols: SymbolLike, is_bytes: bool, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None, name: Name=None) -> None:
-        RepABC.__init__(self, *symbols, nmin=nmin, nmax=nmax)
+    def __init__(self, *symbols: SymbolLike, end: Optional[SymbolLike]=None, is_bytes: bool, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None, name: Name=None) -> None:
+        RepABC.__init__(self, *symbols, end=end, nmin=nmin, nmax=nmax)
         StrMaker.__init__(self, is_bytes=is_bytes, maker=maker, name=name)
 
 class RepStr(RepStrABC):
     """ Repeat symbols and make a result as a string """
-    def __init__(self, *symbols: SymbolLike, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None, name: Name=None) -> None:
-        RepStrABC.__init__(self, *symbols, is_bytes=False, nmin=nmin, nmax=nmax, maker=maker, name=name)
+    def __init__(self, *symbols: SymbolLike, end: Optional[SymbolLike]=None, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None, name: Name=None) -> None:
+        RepStrABC.__init__(self, *symbols, end=end, is_bytes=False, nmin=nmin, nmax=nmax, maker=maker, name=name)
 
 class RepBytes(RepStrABC):
     """ Repeat symbols and make a result as a bytes """
-    def __init__(self, *symbols: SymbolLike, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None, name: Name=None) -> None:
-        RepStrABC.__init__(self, *symbols, is_bytes=True, nmin=nmin, nmax=nmax, maker=maker, name=name)
+    def __init__(self, *symbols: SymbolLike, end: Optional[SymbolLike]=None, nmin: Optional[int]=1, nmax: Optional[int]=None, maker: Maker=None, name: Name=None) -> None:
+        RepStrABC.__init__(self, *symbols, end=end, is_bytes=True, nmin=nmin, nmax=nmax, maker=maker, name=name)
 
 class Opt(Rep):
     """ Optional symbols """

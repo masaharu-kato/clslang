@@ -2,7 +2,7 @@
     Test parsings on the symbol classes
 """
 from clslang.srcitr import StopSrcItr
-from clslang.symbol import OR, Chain, CharNot, Chars, CharsNot, CharsNotWithEscape, ExplChar, ExplStr, NotAllCharsUsed, Opt, Rep, RepSep, RepStr, Seq, SymbolTryFailed, Char
+from clslang.symbol import OR, AnyChar, Chain, CharNot, Chars, CharsNot, CharsNotWithEscape, ExplChar, ExplStr, NotAllCharsUsed, Opt, Rep, RepSep, RepStr, Seq, SymbolTryFailed, Char
 
 import pytest
 
@@ -129,6 +129,13 @@ def test_py_list(bch, ech, sep, cts):
     rule = Seq(bch, RepSep(RepStr(CharsNot(sep, ech)), sep=sep, maker=list), ech)
     assert rule.trystr(bch + ''.join(ct + sep for ct in cts) + ech) == list(cts)
     assert rule.trystr(bch + sep.join(cts) + ech) == list(cts)
+    
+@pytest.mark.parametrize(*list_test_params)
+def test_py_list_with_end(bch, ech, sep, cts):
+    """ Test a general list and make a python list """
+    rule = Seq(bch, RepSep(RepStr(AnyChar(), end=Chars(sep, ech)), sep=sep, maker=list), ech)
+    assert rule.trystr(bch + ''.join(ct + sep for ct in cts) + ech) == list(cts)
+    assert rule.trystr(bch + sep.join(cts) + ech) == list(cts)
 
 list_test_escaped_params = ('bch, ech, sep, esc_ch, cts, res_cts', [
     ('(', ')', ',', '\\', (), ()),
@@ -179,6 +186,12 @@ def test_or_with_none(prefix, main, suffix):
     assert rule.trystr(prefix + main + suffix) == main
     assert rule.trystr(prefix + suffix) == None
 
+@pytest.mark.parametrize('text', ['hoge', 'fugar', 'piyopiyo'])
+def test_quoted_string(text):
+    """ Test quoted string """
+    rule = Seq('"', RepStr(AnyChar(), end='"'), '"')
+    assert rule.trystr('"%s"' % text) == text
 
 if __name__ == '__main__':
-    test_legacy_list_expl('(', ')', ',', ('hoge', 'fuga'))
+    # test_legacy_list_expl('(', ')', ',', ('hoge', 'fuga'))
+    test_py_list_with_end('(', ')', ',', ('hoge', 'fugar', 'piyopiyo'))
