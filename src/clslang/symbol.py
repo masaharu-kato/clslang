@@ -574,10 +574,12 @@ class IgnoreOpt(IgnoreRep):
 
 class OR(OneResSymbol):
     """ OR """
-    def __init__(self, *symbols:SymbolLike, maker:Maker=None, name: Name=None):
+    def __init__(self, *symbols:SymbolLike, finalize=True, maker:Maker=None, name: Name=None):
         OneResSymbol.__init__(self, maker=maker, name=name)
         self._symbol_list = list(map(to_symbol, symbols))
         self._symbols: Optional[Tuple[SymbolABC, ...]] = None # Final tuple of symbols
+        if finalize:
+            self.finalize()
 
     @property
     def symbols(self) -> Tuple[SymbolABC, ...]:

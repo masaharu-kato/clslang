@@ -9,7 +9,7 @@ def make_json():
     DIGIT = Chars(*(chr(i) for i in range(ord('0'), ord('9')+1)))
     WS = IgnoreOpt(RepStr(Chars(' ')))
 
-    Value = OR()
+    Value = OR(finalize=False)
     Value.add(String := Named('String', Seq('"', RepStr(CharNot('"')), '"')))
     Value.add(Named('Real'  , ChainChars(Opt(ExplChar('-')), RepStr(DIGIT), ExplChar('.'), RepStr(DIGIT), maker=float)))
     Value.add(Named('Int'   , ChainChars(Opt(ExplChar('-')), RepStr(DIGIT), maker=int)))
@@ -18,6 +18,7 @@ def make_json():
     Value.add(Named('True  ', Keyword('true', value=True)))
     Value.add(Named('False ', Keyword('false', value=False)))
     Value.add(Named('None  ', Keyword('null', value=None)))
+    Value.finalize()
     JSON = Seq(WS, Value, WS)
     
     return JSON
