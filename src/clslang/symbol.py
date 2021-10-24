@@ -15,7 +15,7 @@ IS_DEBUG = False
 T = TypeVar('T')
 CT = TypeVar('CT') # Char type
 
-CharType = Union[int, str]
+CharType = Union[int, bytes, str]
 CharSeq = Union[bytes, str]
 Maker = Optional[Callable[[Any], Any]]
 Name = Optional[str]
@@ -57,6 +57,21 @@ class SymbolABC():
         if use_all and not srcitr.is_eof():
             raise NotAllCharsUsed('Not all characters used on %s' % repr(srcitr))
         return res
+
+    @abstractmethod
+    def _propvals(self) -> Hashable:
+        """ Get a tuple of property values """
+        raise NotImplementedError()
+
+    def __hash__(self) -> int:
+        """ Calculate a hash value """
+        return hash((self.__class__, self._propvals()))
+
+    def __eq__(self, o: object) -> bool:
+        """ Equal operator """
+        if isinstance(o, type(self)):
+            return self._propvals() == o._propvals()
+        return NotImplemented
 
     def debug(self, *args, **kwargs):
         """ Print a debug output """
@@ -255,6 +270,10 @@ class OneCharABC(CharABC, OneCharMixin):
     def tree(self) -> dict:
         return {self.ch: True, None: False}
 
+    def _propvals(self) -> Hashable:
+        return self.ch
+
+
 class Char(OneCharABC, NoResSymbol):
     """ Character (Ignored in results) """
 
@@ -287,6 +306,9 @@ class CharNot(ResCharABC, OneCharMixin):
 
     def tree(self) -> dict:
         return {self.ch: False, None: True}
+
+    def _propvals(self) -> tuple:
+        return (self.ch, )
 
     def __repr__(self) -> str:
         return '<CharNot:%s>' % self.ch
@@ -321,6 +343,9 @@ class Chars(ResCharABC, CharSetMixin):
     def tree(self) -> dict:
         return {**{ch: True for ch in self.chset}, None: False}
 
+    def _propvals(self) -> Hashable:
+        return tuple(self.chset)
+
     def __repr__(self) -> str:
         return '<Chars:%s>' % '|'.join([str(bytes([ch])) if isinstance(ch, int) else ch for ch in self.chset])
 
@@ -336,6 +361,9 @@ class CharsNot(ResCharABC, CharSetMixin):
     def tree(self) -> dict:
         return {**{ch: False for ch in self.chset}, None: True}
 
+    def _propvals(self) -> Hashable:
+        return tuple(self.chset)
+
     def __repr__(self) -> str:
         return '<Chars:%s>' % '|'.join([str(bytes([ch])) if isinstance(ch, int) else ch for ch in self.chset])
 
@@ -346,7 +374,7 @@ class CharsNotWithEscape(CharWithSingleEscapeABC, CharsNot):
         CharsNot.__init__(self, *chs, maker=maker, name=name)
 
     def __repr__(self) -> str:
-        return '<CharsNotWithEscape:%s>' % '|'.join(self.chset)
+        return '<CharsNotWithEscape:%s>' % '|'.join(map(str, self.chset))
 
 # class CharRange(CharABC):
 #     def __init__(self, ch_first:CharType, ch_last:CharType) -> None:
@@ -364,7 +392,7 @@ class SeqABC(SymbolABC):
     """ Sequence of symbols (ABC) """
     def __init__(self, *symbols: SymbolLike):
         SymbolABC.__init__(self)
-        self.symbols = list(map(to_symbol, symbols))
+        self.symbols = tuple(map(to_symbol, symbols))
     
     def itr_for_try(self, chitr:SrcItr) -> Iterator:
         for i, sym in enumerate(self.symbols):
@@ -375,6 +403,9 @@ class SeqABC(SymbolABC):
 
     def tree(self) -> dict:
         return functools.reduce(lambda base, sym: {sym: base}, reversed((*self.symbols, True)))
+
+    def _propvals(self) -> Hashable:
+        return self.symbols
 
 class Seq(SeqABC, AnyTypeResSymbol):
     """ Sequence of symbols """
@@ -420,6 +451,9 @@ class Except(OneResSymbol):
             yield from self.sym_base.tryitr(chitr)
         else:
             raise SymbolTryFailed('Except-Symbol detected.')
+
+    def _propvals(self) -> Hashable:
+        return self.sym_base, self.sym_except
 
 class StrMaker(OneResSymbol):
     """ Symbol which makes string """
@@ -481,6 +515,9 @@ class RepABC(SymbolABC):
         if self.min is not None and i < self.min:
             raise SymbolTryFailed()
 
+    def _propvals(self) -> Hashable:
+        return self.child_symbol, self.min, self.max
+
 class IgnoreRep(RepABC, NoResSymbol):
     """ Repeat symbols (Ignore results) """
     def __init__(self, *symbols: SymbolLike, child_maker: Maker = None, nmin: Optional[int] = None, nmax: Optional[int] = None):
@@ -539,7 +576,14 @@ class OR(OneResSymbol):
     """ OR """
     def __init__(self, *symbols:SymbolLike, maker:Maker=None, name: Name=None):
         OneResSymbol.__init__(self, maker=maker, name=name)
-        self.symbols = list(map(to_symbol, symbols))
+        self._symbol_list = list(map(to_symbol, symbols))
+        self._symbols: Optional[Tuple[SymbolABC, ...]] = None # Final tuple of symbols
+
+    @property
+    def symbols(self) -> Tuple[SymbolABC, ...]:
+        if self._symbols is None:
+            raise RuntimeError('Symbols are not finalized.')
+        return self._symbols
 
     def itr_for_try(self, chitr: SrcItr) -> Iterator:
         for symbol in self.symbols:
@@ -551,9 +595,15 @@ class OR(OneResSymbol):
                 pass
         raise SymbolTryFailed()
         
-    def add(self, symbol:SymbolLike):
+    def add(self, symbol:SymbolLike) -> None:
         """ Add a new symbol to this sequence """
-        self.symbols.append(to_symbol(symbol))
+        if self._symbols is not None:
+            raise RuntimeError('Symbols are already finalized.')
+        self._symbol_list.append(to_symbol(symbol))
+
+    def finalize(self) -> None:
+        self._symbols = tuple(self._symbol_list)
+
 
 class Chain(SeqABC, ManyResSymbol):
     """ Chain sequences """
