@@ -29,11 +29,12 @@ def state_try_seq(start_state: State, seq: Iterator[Char]) -> Iterator[Any]:
         if maker is CONTINUE:
             ch_stack.append(ch)
         else:
-            if maker is not IGNORE:
+            if isinstance(maker, bool):
                 if maker is OUTPUT:
                     yield bytes(ch_stack)
-                else:
-                    yield maker(ch_stack)
+                # if maker is IGNORE, do nothing
+            else:
+                yield maker(ch_stack)
             ch_stack = []
         if c_state is None:
             return
@@ -43,7 +44,7 @@ CharLike = Union[Char, bytes, str]
 StateWithRef = Dict[Optional[CharLike], Tuple[Optional[StateName], Maker]]
 
 def make_state(rstates: Dict[StateName, StateWithRef]) -> State:
-    states = {name: {} for name in rstates}
+    states: Dict[StateName, State] = {name: {} for name in rstates}
     for name, rstate in rstates.items():
         for chl, (refname, maker) in rstate.items():
             ch = None if chl is None else chl if isinstance(chl, Char) else chl[0] if isinstance(chl, bytes) else ord(chl[0])
