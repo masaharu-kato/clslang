@@ -46,8 +46,11 @@ class SrcItr(Generic[CT], Iterator[CT]):
         """ End this iterator """
         # print('exit... self:', id(self), ', parent:', id(self.parent) if self.parent else 'None')
         if self.child is not None:
+
+            # Advance the position only if no exception occurs
             if not exc_type:
                 self.pos = self.child.pos
+
             del self.child
             self.child = None
 
